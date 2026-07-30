@@ -1,0 +1,63 @@
+{
+  "case_insensitive": true,
+
+  "start_keywords": [
+    "start new", "started new", "starting new", "new project",
+    "new production", "new show", "new piece", "new work",
+    "new research", "new paper", "new module", "new course",
+    "new design", "new concept", "kickoff", "spinning up",
+    "new idea", "new collaboration", "new sound design",
+    "new installation", "new composition"
+  ],
+
+  "delegate_regexes": [
+    "(?:delegating|handing|giving) (?:to|over) (\\w+)",
+    "(\\w+) (?:will handle|is handling|takes over)"
+  ],
+
+  "strategic_keywords": [
+    "strategy", "artistic direction", "concept", "aesthetic",
+    "research question", "methodology", "curation", "programme",
+    "grant", "proposal", "publication", "conference",
+    "exhibition", "premiere", "commission"
+  ],
+
+  "zero_growth_regexes": [
+    "([A-Za-z0-9_\\-]{1,30})\\s*:?\\s*(\\d+)\\s*days?\\s*(?:of\\s*)?(?:zero|no|stalled|stuck)\\s*(?:growth|progress|movement|development)"
+  ],
+
+  "decision_patterns": [
+    { "regex": "about to (?:sign|submit|commit|publish|premiere)", "type": "commitment" },
+    { "regex": "committing \\$?(\\d+)[kKmM]?", "type": "financial_commit" },
+    { "regex": "(?:shutting down|closing|cancelling) (\\S+)", "type": "closure" },
+    { "regex": "(?:funding|grant|budget) (?:round|proposal|application)", "type": "funding_decision" },
+    { "regex": "about to (?:decide|choose|pick)", "type": "decision_node" }
+  ],
+
+  "claim_focus_marker": "priority",
+
+  "business_lines": {
+    "Teaching": ["teaching", "module", "course", "curriculum", "syllabus", "lesson", "student"],
+    "Research": ["research", "paper", "publication", "conference", "article", "chapter"],
+    "Creative Practice": ["sound design", "production", "show", "performance", "composition", "installation"],
+    "Administration": ["admin", "meeting", "committee", "report", "email", "paperwork"],
+    "Technical Production": ["rigging", "lighting", "audio", "tech"]
+  },
+
+  "survival_lines": ["Teaching", "Administration"],
+
+  "executor_roles": ["student", "technician", "assistant", "intern"],
+
+  "constraint_signals": [
+    "no budget",
+    "limited resources",
+    "institutional constraint",
+    "teaching load",
+    "family obligations",
+    "visa restrictions",
+    "deadline pressure",
+    "no runway",
+    "compliance",
+    "health"
+  ]
+}

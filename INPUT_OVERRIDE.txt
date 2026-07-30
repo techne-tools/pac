@@ -1,0 +1,3 @@
+# Patches for pac-analyzer.py to enable stdin input (temp override)
+
+from hermes_tools import execute_code
