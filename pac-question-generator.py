@@ -45,7 +45,7 @@ SOCRATIC: dict[str, dict[str, Any]] = {
     },
     "claim_action_conflict": {
         "observation_fmt": (
-            "You stated focus on {declared_focus}, but actual effort shows: "
+            "You said {declared_focus} is the priority, but actual effort shows: "
             "{conflicting_lines_str}"
         ),
         "human_fmt": "What you say is priority and where your energy goes don't match.",
@@ -126,7 +126,7 @@ PEER: dict[str, dict[str, Any]] = {
     },
     "claim_action_conflict": {
         "observation_fmt": (
-            "Your stated focus is on {declared_focus}, but actual effort shows: "
+            "You said {declared_focus} is the priority, but actual effort shows: "
             "{conflicting_lines_str}"
         ),
         "human_fmt": "The words and the time are in divergence — that happens.",

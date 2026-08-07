@@ -34,6 +34,16 @@
     { "regex": "about to (?:decide|choose|pick)", "type": "decision_node" }
   ],
 
+  "claim_focus_patterns": [
+    "my priority is ([^.,;]+)",
+    "my priorities are ([^.,;]+)",
+    "prioritising ([^.,;]+)",
+    "prioritizing ([^.,;]+)",
+    "focus(?:ed|ing)? on ([^.,;]+)",
+    "what matters (?:to me )?is ([^.,;]+)",
+    "the priority is ([^.,;]+)"
+  ],
+
   "claim_focus_marker": "priority",
 
   "business_lines": {
@@ -41,7 +51,7 @@
     "Research": ["research", "paper", "publication", "conference", "article", "chapter"],
     "Creative Practice": ["sound design", "production", "show", "performance", "composition", "installation"],
     "Administration": ["admin", "meeting", "committee", "report", "email", "paperwork"],
-    "Technical Production": ["rigging", "lighting", "audio", "tech"]
+    "Technical Production": ["qlab", "touchdesigner", "rigging", "lighting", "audio", "tech"]
   },
 
   "survival_lines": ["Teaching", "Administration"],
