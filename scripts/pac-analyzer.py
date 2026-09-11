@@ -88,6 +88,7 @@ class PacConfig:
     constraint_signals: tuple[str, ...]
     executor_roles: frozenset[str]
     claim_focus_marker: str
+    claim_focus_patterns: tuple[re.Pattern, ...]
 
 
 _DEFAULT_CONFIG = PacConfig(
@@ -138,6 +139,15 @@ _DEFAULT_CONFIG = PacConfig(
     ),
     executor_roles=frozenset(["student", "technician", "assistant", "intern"]),
     claim_focus_marker="priority",
+    claim_focus_patterns=(
+        re.compile(r"my priority is ([^.,;]+)", re.I),
+        re.compile(r"my priorities are ([^.,;]+)", re.I),
+        re.compile(r"prioritising ([^.,;]+)", re.I),
+        re.compile(r"prioritizing ([^.,;]+)", re.I),
+        re.compile(r"focus(?:ed|ing)? on ([^.,;]+)", re.I),
+        re.compile(r"what matters (?:to me )?is ([^.,;]+)", re.I),
+        re.compile(r"the priority is ([^.,;]+)", re.I),
+    ),
 )
 
 
@@ -200,6 +210,9 @@ def load_config() -> PacConfig:
         claim_focus_marker=str(
             raw.get("claim_focus_marker", _DEFAULT_CONFIG.claim_focus_marker)
         ),
+        claim_focus_patterns=_compile_regexes(
+            raw.get("claim_focus_patterns", []), flags
+        ) or _DEFAULT_CONFIG.claim_focus_patterns,
     )
 
 
@@ -228,6 +241,96 @@ class Signal:
 
 def _text_of(rec: dict) -> str:
     return f"{rec.get('task', '')} {rec.get('detail', '')}"
+
+
+def _load_momentum():
+    """Load project_momentum.py by path (hyphen-free module, sibling of this
+    file — same pattern as _load_semantic). Returns the module or None so the
+    analyzer stays functional if the sibling is absent."""
+    try:
+        import importlib.util
+        path = Path(__file__).resolve().parent / "project_momentum.py"
+        spec = importlib.util.spec_from_file_location("project_momentum", path)
+        if spec is None or spec.loader is None:
+            return None
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+    except Exception:
+        return None
+
+
+def _resolve_project_dir(line: str):
+    """Resolve a project name to a real path under ~/Development when possible.
+    Exact match first (case-sensitive), then a bounded case-insensitive glob.
+    Returns a string path or None. Never raises. Ground-truth momentum is only
+    attached when the line actually resolves — unknown otherwise (fail-open)."""
+    try:
+        dev = Path.home() / "Development"
+        if not dev.is_dir():
+            return None
+        exact = dev / line
+        if exact.is_dir():
+            return str(exact)
+        # bounded case-insensitive match (first hit only)
+        try:
+            for cand in dev.iterdir():
+                if cand.is_dir() and cand.name.lower() == line.lower():
+                    return str(cand)
+        except Exception:
+            return None
+        return None
+    except Exception:
+        return None
+
+
+# ============================================================================
+# Semantic Classification (local LLM, graceful fallback)
+# ============================================================================
+
+def _load_semantic():
+    """Load pac-semantic.py by path (hyphenated filename can't be imported)."""
+    try:
+        import importlib.util
+        path = Path(__file__).resolve().parent / "pac-semantic.py"
+        spec = importlib.util.spec_from_file_location("pac_semantic", path)
+        if spec is None or spec.loader is None:
+            return None
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+    except Exception:
+        return None
+
+
+def _classify_texts(texts: dict[str, str], config: PacConfig) -> dict[str, str]:
+    """Classify {id: text} into business lines.
+
+    Uses the local LLM when available; falls back to keyword matching.
+    Never raises — always returns a mapping (possibly partial).
+    """
+    lines = list(config.business_lines.keys())
+    result: dict[str, str] = {}
+
+    sem = _load_semantic()
+    if sem is not None and sem.ollama_available():
+        try:
+            semantic = sem.classify_batch(texts, lines)
+            if semantic is not None:
+                result.update(semantic)
+        except Exception:
+            pass
+
+    # Keyword fallback for anything the model didn't classify
+    for i, text in texts.items():
+        if i in result:
+            continue
+        tl = text.lower()
+        for line, kws in config.business_lines.items():
+            if any(kw.lower() in tl for kw in kws):
+                result[i] = line
+                break
+    return result
 
 
 # ============================================================================
@@ -305,6 +408,32 @@ def detect_repetition_pattern(
     return []
 
 
+def _extract_claim(memory: str, config: PacConfig) -> tuple[str, str] | None:
+    """Extract a declared focus from memory.
+
+    Returns (raw_claim, matched_line) when the claim can be mapped to a
+    business line, or (raw_claim, "") when a claim exists but is too vague
+    to map. Returns None when no focus claim is present at all.
+
+    The claim is mapped to a line semantically (local LLM) when available,
+    falling back to keyword matching.
+    """
+    if not memory:
+        return None
+    for pat in config.claim_focus_patterns:
+        m = pat.search(memory)
+        if not m:
+            continue
+        raw = m.group(1).strip()
+        if not raw:
+            continue
+        # Semantic mapping of the claim to a line
+        mapped = _classify_texts({"claim": raw}, config)
+        line = mapped.get("claim", "")
+        return raw, line
+    return None
+
+
 def detect_claim_action_conflict(
     traces: list, memory: str, config: PacConfig
 ) -> list[Signal]:
@@ -313,35 +442,63 @@ def detect_claim_action_conflict(
     if config.claim_focus_marker.lower() not in memory.lower():
         return []
 
+    claim = _extract_claim(memory, config)
+    if claim is None:
+        return []
+    raw_claim, declared_line = claim
+
+    # No declared line (claim too vague to map) — no conflict to assert.
+    # Bail before classifying traces to avoid a wasted semantic call.
+    if not declared_line:
+        return []
+
+    # Classify effort traces semantically (local LLM) with keyword fallback.
+    trace_texts = {str(i): _text_of(rec) for i, rec in enumerate(traces)}
+    classified = _classify_texts(trace_texts, config)
+
     counts = {}
-    for rec in traces:
-        text = _text_of(rec).lower()
-        for line, kws in config.business_lines.items():
-            if any(kw.lower() in text for kw in kws):
-                counts[line] = counts.get(line, 0) + 1
+    for i, rec in enumerate(traces):
+        line = classified.get(str(i))
+        if line:
+            counts[line] = counts.get(line, 0) + 1
 
     total = sum(counts.values()) or 1
     allocation = {k: v / total for k, v in counts.items()}
-    conflicting = [
-        (line, pct) for line, pct in allocation.items()
-        if line not in config.survival_lines and pct > 0.35
-    ]
-    if not conflicting:
+    dominant = None
+    dominant_pct = 0.0
+    if allocation:
+        dominant = max(allocation, key=lambda k: allocation[k])
+        dominant_pct = allocation[dominant]
+
+    # Declared line IS the dominant line — words and actions align.
+    if declared_line == dominant:
         return []
 
-    return [Signal(
-        pattern=Pattern.CLAIM_ACTION_CONFLICT,
-        confidence=0.75,
-        evidence={
-            "declared_focus": config.claim_focus_marker,
-            "actual_allocation": {k: round(v, 3) for k, v in allocation.items()},
-            "conflicting_lines": [(l, round(p, 3)) for l, p in conflicting],
-        },
-        summary=(
-            f"Declared focus on {config.claim_focus_marker}, but "
-            f"{conflicting[0][0]} absorbs {conflicting[0][1]:.0%}"
-        ),
-    )]
+    # Declared line is a survival line — the claim is about keeping the
+    # lights on, not about where creative energy should go.
+    if declared_line in config.survival_lines:
+        return []
+
+    # Genuine divergence: declared a non-survival focus, but effort went
+    # elsewhere. Only fire when the dominant line is meaningfully absorbing
+    # attention (>= 35%) and is not itself the declared line.
+    if dominant and dominant_pct >= 0.35:
+        return [Signal(
+            pattern=Pattern.CLAIM_ACTION_CONFLICT,
+            confidence=0.75,
+            evidence={
+                "declared_focus": raw_claim,
+                "declared_line": declared_line,
+                "actual_allocation": {k: round(v, 3) for k, v in allocation.items()},
+                "conflicting_lines": [(l, round(p, 3)) for l, p in allocation.items()
+                                     if l != declared_line and p >= 0.35],
+            },
+            summary=(
+                f"Declared focus on {declared_line} ({raw_claim!r}), but "
+                f"{dominant} absorbs {dominant_pct:.0%}"
+            ),
+        )]
+    return []
 
 
 def detect_capability_mismatch(
@@ -407,18 +564,45 @@ def detect_sunk_cost(
             ]
             if not active:
                 continue
+
+            # Ground-truth momentum (Anansi-style read-time velocity, adapted for
+            # PAC): attach days-idle from the repo/git reflog when the project
+            # line resolves to a real path. Fail-open — unknown when unresolvable,
+            # so the original statement-based days remain the fallback evidence.
+            momentum = None
+            project_dir = _resolve_project_dir(line)
+            if project_dir:
+                m = _load_momentum()
+                if m is not None:
+                    try:
+                        momentum = m.project_momentum(project_dir)
+                    except Exception:
+                        momentum = None
+
+            evidence = {
+                "line": line,
+                "zero_growth_days": days,
+                "recent_action_count": len(active),
+                "sample_actions": [a.get("task", "")[:80] for a in active[:3]],
+            }
+            if momentum is not None:
+                evidence["momentum"] = momentum
+                if momentum.get("stalled_days") is not None:
+                    evidence["ground_truth_stalled_days"] = momentum["stalled_days"]
+
             signals.append(Signal(
                 pattern=Pattern.SUNK_COST,
                 confidence=_conf_sunk_cost(days, len(active)),
-                evidence={
-                    "line": line,
-                    "zero_growth_days": days,
-                    "recent_action_count": len(active),
-                    "sample_actions": [a.get("task", "")[:80] for a in active[:3]],
-                },
+                evidence=evidence,
                 summary=(
                     f"{line} at {days} days zero growth but still receiving "
                     f"{len(active)} recent tactical actions"
+                    + (
+                        f" (repo ground truth: {momentum['momentum']} "
+                        f"{momentum['stalled_days']} days idle)"
+                        if momentum and momentum.get("stalled_days") is not None
+                        else ""
+                    )
                 ),
             ))
     return signals
