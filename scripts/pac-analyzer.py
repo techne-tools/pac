@@ -284,6 +284,60 @@ def _resolve_project_dir(line: str):
         return None
 
 
+_REGISTER_STATUS_SECTIONS = (
+    ("completed", "## Completed"),
+    ("abandoned", "## Abandoned / Decided Against"),
+    ("backburner", "## Backburner / On Hold"),
+    ("active", "## Active / In Progress"),
+)
+
+
+def _default_register_path() -> Path:
+    """Canonical Project Register location, overridable via env for tests."""
+    override = os.environ.get("PAC_REGISTER_PATH")
+    if override:
+        return Path(override)
+    return Path.home() / "Documents/Files/Personal/Obsidian/black-wish" / "System" / "Registry" / "Project Register.md"
+
+
+def _register_project_status(name: str):
+    """Return the register section a project row lives under: 'completed',
+    'abandoned', 'backburner', 'active', or None when unknown.
+
+    The register is markdown with a heading per section and table rows naming
+    the project. A row's status is the section heading ABOVE it. This stops
+    PAC from reading a COMPLETED or deliberately shelved project's repo idle
+    time as stagnation — inertia on a finished project is not sunk cost.
+
+    Fail-open: missing/unreadable register or unresolvable name -> None, and
+    the caller behaves exactly as before (no suppression). Never raises."""
+    try:
+        path = _default_register_path()
+        if not path.is_file():
+            return None
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return None
+
+    needle = re.sub(r"[\W_]+", "", name.lower())
+    current = None
+    for raw in text.splitlines():
+        line = raw.strip()
+        lower = line.lower()
+        for status, heading in _REGISTER_STATUS_SECTIONS:
+            if lower.startswith(heading.lower()):
+                current = status
+                break
+        if "|" not in line or not line.startswith("|"):
+            continue
+        # a table row: does it name the project? Normalize both sides so
+        # "poste-restante" matches "poste restante" (hyphen vs space etc).
+        row_norm = re.sub(r"[\W_]+", "", lower)
+        if needle in row_norm:
+            return current  # status of the section this row falls under
+    return None
+
+
 # ============================================================================
 # Semantic Classification (local LLM, graceful fallback)
 # ============================================================================
@@ -565,6 +619,16 @@ def detect_sunk_cost(
             if not active:
                 continue
 
+            # Register-aware suppression: idle time on a project the register
+            # lists as completed / abandoned / backburner is NOT sunk cost — it
+            # is a finished project resting. Only Active (or unknown-register)
+            # projects can be stalled. Fail-open: unknown status -> no
+            # suppression; the caller also records the register state so a
+            # future reader can see WHY momentum was ignored.
+            register_status = _register_project_status(line)
+            if register_status in ("completed", "abandoned", "backburner"):
+                continue
+
             # Ground-truth momentum (Anansi-style read-time velocity, adapted for
             # PAC): attach days-idle from the repo/git reflog when the project
             # line resolves to a real path. Fail-open — unknown when unresolvable,
@@ -584,6 +648,7 @@ def detect_sunk_cost(
                 "zero_growth_days": days,
                 "recent_action_count": len(active),
                 "sample_actions": [a.get("task", "")[:80] for a in active[:3]],
+                "register_status": register_status,
             }
             if momentum is not None:
                 evidence["momentum"] = momentum
