@@ -185,6 +185,7 @@ These registers are held in tension — no single one dominates. The voice moves
 
 - `references/enso-os-provenance.md` — Full provenance, adaptation decisions, and what was left behind from the Enso OS port
 - `scripts/pac-analyzer.py` — 5-pattern detection engine (stdlib only)
+- `scripts/pac-semantic.py` — Local LLM semantic classification (ollama, graceful fallback)
 - `scripts/pac-question-generator.py` — Dual-voice challenge generator (template-based, no LLM)
 - `scripts/pac-config.json` — PaR domain configuration
 - `../pac-prefs.json` — Voice preference (persistent)

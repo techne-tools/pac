@@ -388,6 +388,55 @@ def _classify_texts(texts: dict[str, str], config: PacConfig) -> dict[str, str]:
 
 
 # ============================================================================
+# Semantic Classification (local LLM, graceful fallback)
+# ============================================================================
+
+def _load_semantic():
+    """Load pac-semantic.py by path (hyphenated filename can't be imported)."""
+    try:
+        import importlib.util
+        path = Path(__file__).resolve().parent / "pac-semantic.py"
+        spec = importlib.util.spec_from_file_location("pac_semantic", path)
+        if spec is None or spec.loader is None:
+            return None
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+    except Exception:
+        return None
+
+
+def _classify_texts(texts: dict[str, str], config: PacConfig) -> dict[str, str]:
+    """Classify {id: text} into business lines.
+
+    Uses the local LLM when available; falls back to keyword matching.
+    Never raises — always returns a mapping (possibly partial).
+    """
+    lines = list(config.business_lines.keys())
+    result: dict[str, str] = {}
+
+    sem = _load_semantic()
+    if sem is not None and sem.ollama_available():
+        try:
+            semantic = sem.classify_batch(texts, lines)
+            if semantic is not None:
+                result.update(semantic)
+        except Exception:
+            pass
+
+    # Keyword fallback for anything the model didn't classify
+    for i, text in texts.items():
+        if i in result:
+            continue
+        tl = text.lower()
+        for line, kws in config.business_lines.items():
+            if any(kw.lower() in tl for kw in kws):
+                result[i] = line
+                break
+    return result
+
+
+# ============================================================================
 # Confidence Calculators
 # ============================================================================
 

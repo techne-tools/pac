@@ -200,7 +200,7 @@ def main() -> None:
             input=json.dumps(input_data),
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=120,
         )
         if result.returncode != 0 or not result.stdout.strip():
             return  # no signals — silent exit
